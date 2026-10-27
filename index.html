@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Med Karim Bchini">
+
+<title>Démo RAG — Recherche sémantique d'annonces</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#121b2e; --panel2:#0f1728; --line:#22304a;
+    --txt:#e8eefc; --muted:#95a6c4; --accent:#3ddc97; --accent2:#5aa9ff; --warn:#ffb86b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#16233d 0%,var(--bg) 55%);
+       color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 20px 60px}
+  header{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:flex-start;margin-bottom:22px}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:13.5px;max-width:640px}
+  .badge{display:inline-block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+         color:var(--accent);border:1px solid #1f5a42;background:#0e2a20;padding:3px 8px;border-radius:999px}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+        border:1px solid var(--line);border-radius:14px;padding:16px}
+  .search{display:flex;gap:10px;margin:18px 0 10px}
+  input[type=text]{flex:1;background:#0a1322;border:1px solid var(--line);color:var(--txt);
+        border-radius:10px;padding:13px 14px;font-size:15px;outline:none}
+  input[type=text]:focus{border-color:#2f4a74;box-shadow:0 0 0 3px rgba(90,169,255,.12)}
+  button{background:var(--accent);color:#04231a;border:0;border-radius:10px;padding:0 20px;
+        font-weight:700;font-size:14px;cursor:pointer}
+  button:hover{filter:brightness(1.07)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .chip{font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;
+        padding:6px 11px;cursor:pointer;background:#0d1626}
+  .chip:hover{color:var(--txt);border-color:#33507d}
+  .grid{display:grid;grid-template-columns:1.55fr 1fr;gap:16px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 12px}
+  .hit{padding:12px;border:1px solid var(--line);border-radius:11px;margin-bottom:10px;background:#0d1626}
+  .hit:first-child{border-color:#2c6d55;background:#0e1c25}
+  .hit h3{margin:0 0 3px;font-size:14.5px}
+  .meta{color:var(--muted);font-size:12.5px}
+  .score{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .bar{height:5px;flex:1;background:#182338;border-radius:99px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent))}
+  .score span{font-variant-numeric:tabular-nums;font-size:11.5px;color:var(--muted);min-width:40px;text-align:right}
+  .summary{font-size:13.5px;color:#cdd8ef;white-space:pre-wrap}
+  .facet{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-bottom:1px dashed #1b2942}
+  .facet b{color:var(--accent2);font-weight:600}
+  .note{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.5}
+  .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 5px;font-size:11px}
+  footer{margin-top:26px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+  a{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>Recherche sémantique d'annonces</h1>
+    <div class="sub">Démonstration du pipeline <b>retrieval → synthèse</b> d'un système RAG :
+    le même principe qu'en production (embeddings + LLM), ici en local pour tourner sans clé API.</div>
+  </div>
+  <div><span class="badge">Démo hors-ligne</span></div>
+</header>
+
+<div class="card">
+  <div class="search">
+    <input id="q" type="text" spellcheck="false"
+      placeholder="Ex. SUV automatique essence moins de 20 000 € à Lyon…">
+    <button id="go">Rechercher</button>
+  </div>
+  <div class="chips" id="chips"></div>
+
+  <div class="grid">
+    <div>
+      <h2>Résultats classés par pertinence</h2>
+      <div id="hits"></div>
+    </div>
+    <div>
+      <h2>Synthèse</h2>
+      <div class="card" style="background:#0d1626">
+        <div id="summary" class="summary"></div>
+        <div style="margin-top:14px" id="facets"></div>
+      </div>
+      <div class="note">
+        <b>Comment ça marche.</b> Le texte de chaque annonce et la requête sont transformés en
+        vecteurs <b>TF-IDF</b>, puis comparés par similarité cosinus. Les critères détectés
+        (budget, carburant, boîte, ville) ajustent le classement.<br><br>
+        En production : <b>embeddings</b> (Pinecone/Weaviate) + <b>LLM</b> pour la synthèse —
+        la démo remplace le LLM par des règles, volontairement, pour rester vérifiable et hors-ligne.
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Démo autonome · aucune donnée envoyée · jeu de 20 annonces fictives ·
+  <a href="https://github.com/karimtn" target="_blank" rel="noopener">github.com/karimtn</a>
+</footer>
+
+</div>
+
+<script>
+const CARS = [
+ {id:1, title:"Peugeot 3008 1.2 PureTech 130 Allure", price:19900, year:2020, km:48000, fuel:"essence", gearbox:"automatique", city:"Lyon", desc:"SUV familial, boîte automatique EAT8, écran tactile, régulateur adaptatif, entretien à jour."},
+ {id:2, title:"Renault Captur 1.3 TCe 130 Intens", price:16500, year:2019, km:61000, fuel:"essence", gearbox:"automatique", city:"Lyon", desc:"Petit SUV urbain, boîte EDC, caméra de recul, Apple CarPlay, pneus neufs."},
+ {id:3, title:"Volkswagen Golf 2.0 TDI 150 DSG7", price:18700, year:2019, km:84000, fuel:"diesel", gearbox:"automatique", city:"Paris", desc:"Compacte routière, boîte DSG, sièges chauffants, phares LED, carnet complet."},
+ {id:4, title:"Citroën C3 Aircross 1.2 PureTech 110", price:13900, year:2018, km:72000, fuel:"essence", gearbox:"manuelle", city:"Lille", desc:"SUV citadin, faible consommation, régulateur, Bluetooth, idéal ville."},
+ {id:5, title:"Toyota Yaris Hybride 1.5 100h", price:17800, year:2021, km:39000, fuel:"hybride", gearbox:"automatique", city:"Paris", desc:"Hybride non rechargeable, boîte automatique, 4,2 L/100 km, garantie constructeur."},
+ {id:6, title:"Tesla Model 3 Standard Plus", price:28900, year:2021, km:52000, fuel:"electrique", gearbox:"automatique", city:"Paris", desc:"Berline électrique, autonomie 430 km, autopilote, recharge rapide, intérieur cuir."},
+ {id:7, title:"Peugeot 208 1.2 PureTech 100 Active", price:12400, year:2020, km:45000, fuel:"essence", gearbox:"manuelle", city:"Nantes", desc:"Citadine récente, écran tactile, climatisation, faible kilométrage, première main."},
+ {id:8, title:"Ford Focus 1.5 EcoBlue 120 Titanium", price:15900, year:2019, km:77000, fuel:"diesel", gearbox:"manuelle", city:"Bordeaux", desc:"Compacte confortable, GPS, régulateur, sièges chauffants, entretien récent."},
+ {id:9, title:"BMW Série 3 320d Business Design", price:27900, year:2020, km:69000, fuel:"diesel", gearbox:"automatique", city:"Paris", desc:"Berline premium, boîte automatique, cuir, navigation, caméra 360, historique complet."},
+ {id:10, title:"Dacia Duster 1.3 TCe 130 Prestige", price:17900, year:2021, km:35000, fuel:"essence", gearbox:"manuelle", city:"Toulouse", desc:"SUV robuste, grand coffre, écran tactile, barres de toit, garantie restante."},
+ {id:11, title:"Renault Zoé R135 Intens", price:11900, year:2019, km:41000, fuel:"electrique", gearbox:"automatique", city:"Lyon", desc:"Citadine électrique, autonomie 300 km, recharge domestique, idéale trajets urbains."},
+ {id:12, title:"Audi A4 Avant 35 TDI S line", price:26500, year:2019, km:92000, fuel:"diesel", gearbox:"automatique", city:"Lille", desc:"Break familial, boîte S tronic, virtual cockpit, hayon électrique, entretien Audi."},
+ {id:13, title:"Opel Corsa 1.2 Turbo 100 Elegance", price:13500, year:2020, km:38000, fuel:"essence", gearbox:"manuelle", city:"Nantes", desc:"Citadine moderne, Android Auto, caméra de recul, faible consommation."},
+ {id:14, title:"Peugeot 5008 1.5 BlueHDi 130 GT", price:24900, year:2020, km:64000, fuel:"diesel", gearbox:"automatique", city:"Bordeaux", desc:"SUV 7 places, boîte EAT8, i-Cockpit, attelage, idéal famille nombreuse."},
+ {id:15, title:"Hyundai Kona 64 kWh Executive", price:23900, year:2021, km:33000, fuel:"electrique", gearbox:"automatique", city:"Toulouse", desc:"SUV électrique, autonomie 480 km, charge rapide 80 % en 45 min, sièges chauffants."},
+ {id:16, title:"Fiat 500 1.0 Hybrid Lounge", price:11900, year:2021, km:29000, fuel:"hybride", gearbox:"manuelle", city:"Paris", desc:"Mini citadine hybride, style rétro, toit ouvrant, parfaite pour la ville."},
+ {id:17, title:"Volkswagen Polo 1.0 TSI 95 Life", price:14900, year:2020, km:42000, fuel:"essence", gearbox:"manuelle", city:"Lyon", desc:"Citadine polyvalente, écran digital, régulateur, historique limpide."},
+ {id:18, title:"Skoda Octavia Combi 2.0 TDI 150", price:19900, year:2019, km:88000, fuel:"diesel", gearbox:"automatique", city:"Lille", desc:"Break spacieux, boîte DSG, coffre géant, GPS, très bonne routière."},
+ {id:19, title:"Mini Cooper 1.5 136 Auto", price:18900, year:2020, km:47000, fuel:"essence", gearbox:"automatique", city:"Paris", desc:"Citadine premium, boîte automatique, toit panoramique, finition soignée."},
+ {id:20, title:"Kia e-Niro 64 kWh Premium", price:22900, year:2020, km:51000, fuel:"electrique", gearbox:"automatique", city:"Nantes", desc:"SUV électrique, autonomie 455 km, charge rapide, garantie 7 ans."}
+];
+
+const STOP = new Set(("le la les un une des du de d au aux a et ou en dans sur pour avec sans par plus moins que qui quoi dont " +
+ "je tu il elle nous vous ils elles mon ma mes ton ta tes son sa ses ce cet cette ces est sont ai as avons avez ont " +
+ "veux voudrais cherche trouver annonce annonces vehicule voiture auto voiture bon pas tres bien").split(" "));
+
+const norm = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+const stem = t => t.length > 4 ? t.replace(/(aux|eux|es|s)$/,"") : t;
+function tokens(s){
+  return norm(s).split(/[^a-z0-9]+/).filter(t=>t.length>2 && !STOP.has(t)).map(stem);
+}
+
+// --- index TF-IDF ---
+const docs = CARS.map(c => tokens(`${c.title} ${c.desc} ${c.fuel} ${c.gearbox} ${c.city} ${c.year} ${c.km} km`));
+const N = docs.length;
+const df = new Map();
+docs.forEach(tk => { new Set(tk).forEach(t => df.set(t,(df.get(t)||0)+1)); });
+const idf = t => Math.log((N+1)/((df.get(t)||0)+1)) + 1;
+function vec(tk){
+  const tf = new Map();
+  tk.forEach(t=>tf.set(t,(tf.get(t)||0)+1));
+  const v = new Map();
+  let norm2 = 0;
+  tf.forEach((c,t)=>{ const w = (1+Math.log(c)) * idf(t); v.set(t,w); norm2 += w*w; });
+  const n = Math.sqrt(norm2) || 1;
+  v.forEach((w,t)=>v.set(t,w/n));
+  return v;
+}
+const docVecs = docs.map(vec);
+
+function cosine(a,b){
+  let s=0; a.forEach((w,t)=>{ if(b.has(t)) s += w*b.get(t); }); return s;
+}
+
+// --- détection de critères ---
+const CITIES = ["paris","lyon","lille","nantes","bordeaux","toulouse","marseille"];
+function facets(q){
+  const n = norm(q);
+  const f = {};
+  const nums = [...n.matchAll(/(\d[\d\s.]{2,7})\s*(?:€|eur|euros?)/g)]
+    .map(m=>parseInt(m[1].replace(/[\s.]/g,""),10)).filter(v=>v>=3000&&v<=200000);
+  if(nums.length) f.budget = Math.max(...nums);
+  if(/electrique|ev\b|batterie/.test(n)) f.fuel="electrique";
+  else if(/hybride/.test(n)) f.fuel="hybride";
+  else if(/diesel|gasoil/.test(n)) f.fuel="diesel";
+  else if(/essence|sp95|sp98/.test(n)) f.fuel="essence";
+  if(/automatique|auto\b|eat8|dsg|edc/.test(n)) f.gearbox="automatique";
+  else if(/manuelle/.test(n)) f.gearbox="manuelle";
+  const city = CITIES.find(c=>n.includes(c));
+  if(city) f.city = city;
+  if(/suv|familial|7 places/.test(n)) f.body="suv";
+  if(/citadine|ville|urbain/.test(n)) f.body="citadine";
+  return f;
+}
+
+function search(q){
+  const f = facets(q);
+  const qv = vec(tokens(q));
+  const scored = CARS.map(c=>{
+    let s = cosine(qv, docVecs[c.id-1]);
+    if(f.fuel) s += c.fuel===f.fuel ? 0.18 : -0.22;
+    if(f.gearbox) s += c.gearbox===f.gearbox ? 0.10 : -0.10;
+    if(f.city) s += c.city===f.city ? 0.12 : -0.14;
+    if(f.body==="citadine" && /suv|3008|5008|kona|niro|duster|aircross/i.test(c.title)) s -= 0.10;
+    if(f.body==="suv" && /suv|3008|captur|duster|5008|kona|niro|aircross/i.test(c.title)) s += 0.08;
+    if(f.body==="citadine" && /208|corsa|polo|500|yaris|c3|mini|zoe/i.test(c.title)) s += 0.08;
+    if(f.budget){
+      if(c.price <= f.budget) s += 0.10;
+      else s -= Math.min(0.5,(c.price-f.budget)/f.budget);
+    }
+    return {...c, score:s};
+  }).sort((a,b)=>b.score-a.score);
+  return {f, scored};
+}
+
+// --- rendu ---
+const fmt = n => n.toLocaleString("fr-FR")+" €";
+function renderSummary(q,f,top){
+  if(!top.length) return "Aucune annonce ne correspond.";
+  const prices = top.map(c=>c.price);
+  const lines = [];
+  lines.push(`Requête : « ${q.trim()} »`);
+  const crit = [];
+  if(f.budget) crit.push(`budget ≤ ${fmt(f.budget)}`);
+  if(f.fuel) crit.push(f.fuel);
+  if(f.gearbox) crit.push(`boîte ${f.gearbox}`);
+  if(f.city) crit.push(f.city);
+  lines.push(crit.length ? `Critères retenus : ${crit.join(" · ")}` : "Aucun critère structuré détecté — classement textuel.");
+  lines.push("");
+  lines.push(`Les 3 meilleures annonces, de ${fmt(Math.min(...prices.slice(0,3)))} à ${fmt(Math.max(...prices.slice(0,3)))} :`);
+  top.slice(0,3).forEach((c,i)=>lines.push(`${i+1}. ${c.title} — ${fmt(c.price)} · ${c.km.toLocaleString("fr-FR")} km · ${c.city}`));
+  const okBudget = f.budget ? top.slice(0,3).every(c=>c.price<=f.budget) : null;
+  if(okBudget===true) lines.push("\nToutes respectent le budget indiqué.");
+  if(okBudget===false) lines.push("\nCertaines dépassent le budget — voir le détail des scores.");
+  return lines.join("\n");
+}
+
+function renderHits(top){
+  const max = top[0] ? Math.max(top[0].score, 0.0001) : 1;
+  document.getElementById("hits").innerHTML = top.slice(0,8).map(c=>{
+    const pct = Math.max(0, Math.min(100, Math.round((c.score/max)*100)));
+    return `<div class="hit">
+      <h3>${c.title}</h3>
+      <div class="meta">${fmt(c.price)} · ${c.year} · ${c.km.toLocaleString("fr-FR")} km · ${c.fuel} · ${c.gearbox} · ${c.city}</div>
+      <div class="meta" style="margin-top:4px">${c.desc}</div>
+      <div class="score"><div class="bar"><i style="width:${pct}%"></i></div><span>${c.score.toFixed(3)}</span></div>
+    </div>`;
+  }).join("") || `<div class="meta">Aucun résultat.</div>`;
+}
+
+function renderFacets(f){
+  const rows = [
+    ["Budget", f.budget?fmt(f.budget):"—"],
+    ["Carburant", f.fuel||"—"],
+    ["Boîte", f.gearbox||"—"],
+    ["Ville", f.city||"—"],
+  ];
+  document.getElementById("facets").innerHTML = rows.map(([k,v])=>`<div class="facet"><span>${k}</span><b>${v}</b></div>`).join("");
+}
+
+function run(q){
+  const {f,scored} = search(q);
+  renderHits(scored);
+  renderFacets(f);
+  document.getElementById("summary").textContent = renderSummary(q,f,scored);
+}
+
+const EXAMPLES = [
+  "SUV automatique essence moins de 20 000 € à Lyon",
+  "citadine électrique pour la ville budget 15 000 €",
+  "break diesel automatique familial",
+  "hybride récente moins de 20 000 €",
+  "berline premium automatique à Paris"
+];
+document.getElementById("chips").innerHTML = EXAMPLES.map(e=>`<span class="chip">${e}</span>`).join("");
+document.querySelectorAll(".chip").forEach(el=>el.addEventListener("click",()=>{
+  const q = el.textContent; document.getElementById("q").value = q; run(q);
+}));
+document.getElementById("go").addEventListener("click",()=>run(document.getElementById("q").value));
+document.getElementById("q").addEventListener("keydown",e=>{ if(e.key==="Enter") run(e.target.value); });
+run("SUV automatique essence moins de 20 000 € à Lyon");
+</script>
+</body>
+</html>
