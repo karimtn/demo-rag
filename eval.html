@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Med Karim Bchini">
+<title>Évaluation de la qualité des réponses — Démo RAG</title>
+<style>
+  :root{ --bg:#0b1220; --panel:#121b2e; --panel2:#0f1728; --line:#22304a; --txt:#e8eefc; --muted:#95a6c4;
+         --accent:#3ddc97; --accent2:#5aa9ff; --warn:#ffb86b; --bad:#ff7b7b; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#16233d 0%,var(--bg) 55%);color:var(--txt);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:26px 0 12px}
+  .sub{color:var(--muted);font-size:13.5px;max-width:760px}
+  a{color:var(--accent2)}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 4px;align-items:center}
+  .tab{background:#0d1626;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer}
+  .tab.on{background:var(--accent);color:#04231a;border-color:var(--accent)}
+  .tab:disabled{opacity:.45;cursor:not-allowed}
+  label.tab input{display:none}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .kpi .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:12.5px;color:var(--muted)}
+  .kpi .h{font-size:11.5px;color:var(--muted);margin-top:4px}
+  .good{color:var(--accent)} .mid{color:var(--warn)} .low{color:var(--bad)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pill{display:inline-block;font-size:11px;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .ok{color:var(--accent);font-weight:700} .ko{color:var(--bad);font-weight:700}
+  .issue{color:var(--warn);font-size:12.5px}
+  details summary{cursor:pointer;color:var(--accent2);font-size:12.5px}
+  pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#cdd8ef;background:#0a1322;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0 0}
+  .method{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;font-size:13px;color:#cdd8ef}
+  .method b{color:var(--txt)}
+  footer{margin-top:26px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="font-size:12.5px;margin-bottom:10px"><a href="index.html">← Retour à la démo de recherche</a></div>
+  <h1>Évaluation de la qualité des réponses</h1>
+  <div class="sub">Un pipeline RAG ne se juge pas à l'œil sur trois exemples. Ici, chaque version est passée sur un
+    <b>jeu de test annoté</b> de 14 questions — dont des pièges (modèle absent, critères impossibles) — et mesurée sur
+    trois axes : la <b>recherche</b>, l'<b>ancrage</b> de la réponse dans les sources, et la capacité à <b>dire « je ne sais pas »</b>.</div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-src="live">Local · calculé en direct</button>
+    <button class="tab" data-src="eval/reports/azure.json" id="tab-azure">Azure OpenAI · dernier rapport</button>
+    <label class="tab">Charger un rapport JSON<input type="file" id="file" accept="application/json"></label>
+  </div>
+  <div class="meta sub" id="source" style="font-size:12.5px"></div>
+
+  <h2>Synthèse</h2>
+  <div class="kpis" id="kpis"></div>
+
+  <h2>Détail par question</h2>
+  <div class="card" style="padding:4px 8px;overflow-x:auto">
+    <table>
+      <thead><tr><th>#</th><th>Question</th><th>Teste</th><th>Top 5 récupéré</th><th>Cité</th><th>MRR</th><th>Verdict</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <h2>Méthode</h2>
+  <div class="method">
+    <div class="card"><b>Recherche.</b> Pour les questions qui ont une réponse : hit@1, recall@3, recall@5, MRR et nDCG@5,
+      calculés sur le classement renvoyé, contre les annonces pertinentes annotées à la main.</div>
+    <div class="card"><b>Ancrage (anti-hallucination).</b> Contrôles déterministes : chaque citation existe et vient du contexte,
+      chaque prix et kilométrage appartient à une annonce citée, aucun modèle hors catalogue n'est présenté comme disponible.</div>
+    <div class="card"><b>Contraintes et abstention.</b> Toute annonce recommandée respecte budget, carburant, boîte, ville et
+      carrosserie ; sur une question impossible, la bonne réponse est « aucune annonce ne correspond ».</div>
+    <div class="card"><b>Juge LLM (option).</b> Avec <code>--judge</code>, un second appel GPT note pertinence et fidélité de 1 à 5.
+      Il complète les contrôles déterministes sans les remplacer : un juge LLM peut lui-même se tromper.</div>
+  </div>
+
+  <footer>Code : <code>lib/eval-core.js</code> (partagé navigateur / Node) · <code>azure/src/eval.ts</code> ·
+    <a href="https://github.com/karimtn/demo-rag" target="_blank" rel="noopener">github.com/karimtn/demo-rag</a></footer>
+</div>
+
+<script src="lib/catalog.js"></script>
+<script src="lib/local-rag.js"></script>
+<script src="lib/eval-core.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pct = (x) => `${Math.round(x * 100)} %`;
+const tone = (x) => (x >= 0.9 ? "good" : x >= 0.7 ? "mid" : "low");
+
+function kpi(label, value, hint, ratio = value) {
+  const v = typeof value === "number" && value <= 1 ? pct(value) : value;
+  return `<div class="card kpi"><div class="v ${typeof ratio === "number" ? tone(ratio) : ""}">${esc(v)}</div><div class="l">${esc(label)}</div>${hint ? `<div class="h">${esc(hint)}</div>` : ""}</div>`;
+}
+
+function render(report, sourceLabel) {
+  const s = report.summary;
+  $("source").textContent = `${sourceLabel} · pipeline « ${s.name} » · ${s.questions} questions · ${new Date(s.date).toLocaleString("fr-FR")}` +
+    (s.latencyMsP50 ? ` · latence médiane ${s.latencyMsP50} ms` : "");
+  $("kpis").innerHTML = [
+    kpi("Réussite de bout en bout", s.passRate, "question sans aucun problème détecté"),
+    kpi("Recall@3", s.retrieval.recall3, "pertinents dans le top 3"),
+    kpi("MRR", s.retrieval.mrr.toFixed(2), "rang du 1er pertinent", s.retrieval.mrr),
+    kpi("nDCG@5", s.retrieval.ndcg5.toFixed(2), "qualité du classement", s.retrieval.ndcg5),
+    kpi("Réponses ancrées", s.generation.groundedRate, `${s.issuesByKind.hallucination} hallucination(s) détectée(s)`),
+    kpi("Critères respectés", s.generation.constraintRate, "aucune annonce hors critères"),
+    kpi("Abstention juste", s.generation.abstentionAccuracy, "sait dire « rien ne correspond »"),
+    ...(s.judge ? [kpi("Juge LLM · fidélité", `${s.judge.faithfulness.toFixed(1)}/5`, `pertinence ${s.judge.relevance.toFixed(1)}/5`, s.judge.faithfulness / 5)] : []),
+  ].join("");
+  $("rows").innerHTML = report.rows.map((r) => `
+    <tr>
+      <td class="num">${esc(r.item.id)}</td>
+      <td>${esc(r.item.query)}
+        <details><summary>Réponse générée</summary><pre>${esc(r.ans.text)}</pre>
+        ${r.judgement ? `<div class="meta" style="font-size:12px;margin-top:4px">Juge : pertinence ${r.judgement.relevance}/5 · fidélité ${r.judgement.faithfulness}/5 — ${esc(r.judgement.rationale)}</div>` : ""}</details></td>
+      <td><span class="pill">${esc(r.item.type)}</span></td>
+      <td class="num">${(r.ans.retrieved || []).map((id) => (r.item.relevant.includes(id) ? `<b class="ok">${id}</b>` : id)).join(", ") || "—"}</td>
+      <td class="num">${r.ans.noMatch ? "<i>aucune</i>" : (r.ans.citations || []).join(", ")}</td>
+      <td class="num">${r.metrics ? r.metrics.mrr.toFixed(2) : "—"}</td>
+      <td>${r.pass ? '<span class="ok">✓</span>' : '<span class="ko">✗</span>'}
+        ${r.issues.map((i) => `<div class="issue">${esc(i.kind)} : ${esc(i.msg)}</div>`).join("")}</td>
+    </tr>`).join("");
+}
+
+async function show(src) {
+  document.querySelectorAll(".tab[data-src]").forEach((t) => t.classList.toggle("on", t.dataset.src === src));
+  if (src === "live") return render(await RAGEval.runEval((q) => LocalRAG.answer(q), { name: "local" }), "Calculé dans votre navigateur");
+  try {
+    const res = await fetch(src, { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json(), "Rapport généré par azure/src/eval.ts");
+  } catch {
+    $("source").textContent = "Aucun rapport Azure publié pour l'instant : lancez « npm run eval -- --pipeline azure --judge » dans azure/.";
+  }
+}
+
+document.querySelectorAll(".tab[data-src]").forEach((t) => t.addEventListener("click", () => show(t.dataset.src)));
+$("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try { render(JSON.parse(await f.text()), `Fichier « ${f.name} »`); document.querySelectorAll(".tab[data-src]").forEach((t) => t.classList.remove("on")); }
+  catch { $("source").textContent = "Fichier illisible : un rapport JSON produit par eval.ts est attendu."; }
+});
+show("live");
+</script>
+</body>
+</html>

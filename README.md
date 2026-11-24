@@ -1,7 +1,20 @@
 # Démo RAG — recherche sémantique d'annonces
 
-Démo **autonome** (un seul fichier, aucune dépendance, aucune clé API) du pipeline
-**retrieval → synthèse** d'un système RAG.
+Un même cas d'usage (rechercher des annonces automobiles en langage naturel), en trois volets :
+
+| Volet | Où | Ce que ça montre |
+|---|---|---|
+| **Démo locale** | [`index.html`](index.html), mode « Local » | Le pipeline retrieval → synthèse, hors ligne, sans clé (TF-IDF + règles) |
+| **Variante Azure** | [`azure/`](azure/), mode « Azure OpenAI » | Azure OpenAI + Azure AI Search, orchestré en **LangChain.js** (TypeScript), avec garde-fous anti-hallucination |
+| **Évaluation** | [`eval.html`](eval.html), `azure/src/eval.ts` | Jeu de test annoté, métriques de recherche, détection d'hallucinations, abstention, juge LLM |
+
+Démo en ligne : https://karimtn.github.io/demo-rag/ · évaluation : https://karimtn.github.io/demo-rag/eval.html
+
+---
+
+## 1. Démo locale
+
+Démo **autonome** (aucune dépendance, aucune clé API) du pipeline **retrieval → synthèse** d'un système RAG.
 
 ## Ce que ça démontre
 
@@ -13,17 +26,17 @@ Démo **autonome** (un seul fichier, aucune dépendance, aucune clé API) du pip
 
 - Ce n'est **pas** un LLM : la synthèse est générée par des **règles**, pour que la démo tourne hors-ligne et reste vérifiable.
 - Ce n'est **pas** des embeddings : c'est du **TF-IDF**, une baseline lexicographique.
-- **En production**, le pipeline réel utilise des **embeddings** (Pinecone/Weaviate) + un **LLM** pour la synthèse — c'est exactement ce que j'ai construit sur le projet RAG décrit dans mon CV.
+- Le pipeline avec **embeddings** et **LLM** est la [variante Azure](azure/) : même interface, mode « Azure OpenAI ».
 
 ## Lancer
 
 ```bash
-# le plus simple
-open demo-rag/index.html          # macOS
-xdg-open demo-rag/index.html      # Linux
+# ouvrir directement le fichier
+open index.html          # macOS
+xdg-open index.html      # Linux
 
-# ou via un petit serveur (utile pour partager sur le réseau)
-npx serve demo-rag
+# ou via un petit serveur (nécessaire pour afficher le rapport Azure dans eval.html)
+npx serve .
 ```
 ## Script de démo — 3 minutes
 
@@ -45,6 +58,38 @@ npx serve demo-rag
 - **Similarité** : cosinus.
 - **Réordonnancement** : bonus/malus par facette (carburant, boîte, ville, carrosserie, budget).
 - **Jeu de données** : 20 annonces **fictives** (aucune donnée réelle, aucun problème RGPD).
+
+## 2. Variante Azure OpenAI + Azure AI Search + LangChain.js
+
+Voir [`azure/README.md`](azure/README.md). En résumé : analyse de la requête par GPT en sortie structurée, recherche
+hybride (BM25 + vecteurs) avec filtre OData, budget appliqué par le code, génération avec citations obligatoires, puis
+garde-fous : citation hors contexte supprimée, prix non vérifiable → texte régénéré depuis les données, réponse sans
+source → abstention.
+
+## 3. Évaluation de la qualité des réponses
+
+[`eval.html`](eval.html) calcule l'évaluation du pipeline local en direct dans le navigateur et affiche le dernier rapport Azure.
+
+- **Jeu de test** : 14 questions annotées à la main, dont 3 pièges (modèle absent, véhicule hors catalogue, critères impossibles).
+- **Recherche** : hit@1, recall@3/5, MRR, nDCG@5.
+- **Ancrage** : contrôles déterministes — citations existantes et issues du contexte, prix et kilométrages vérifiés, aucun modèle inventé.
+- **Contraintes et abstention** : aucune annonce hors critères, « rien ne correspond » quand c'est vrai.
+- **Juge LLM** (option `--judge`) : pertinence et fidélité notées de 1 à 5.
+
+Le pipeline local obtient 79 % de réussite de bout en bout : il rate les synonymes (« sobre ») et propose une Model 3
+quand on demande une Model Y. C'est le rôle de l'évaluation : rendre ces limites visibles et mesurables.
+
+## Structure
+
+```
+index.html          démo (modes Local / Azure)
+eval.html           tableau de bord d'évaluation
+lib/catalog.js      20 annonces fictives (partagé navigateur / Node)
+lib/local-rag.js    pipeline local
+lib/eval-core.js    jeu de test, métriques, détecteurs d'hallucinations
+azure/              variante Azure en TypeScript + LangChain.js
+eval/reports/       rapports JSON produits par azure/src/eval.ts
+```
 
 ## Limites assumées
 

@@ -1,0 +1,37 @@
+{
+  "name": "demo-rag-azure",
+  "version": "1.0.0",
+  "description": "Variante Azure OpenAI + Azure AI Search du démonstrateur RAG, orchestrée avec LangChain.js",
+  "scripts": {
+    "ingest": "tsx src/ingest.ts",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "eval": "tsx src/eval.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.14.1",
+    "@azure/search-documents": "^13.1.0",
+    "@langchain/community": "^1.1.29",
+    "@langchain/core": "^1.5.1",
+    "@langchain/openai": "^1.8.5",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}
