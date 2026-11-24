@@ -5,7 +5,8 @@ Un même cas d'usage (rechercher des annonces automobiles en langage naturel), e
 | Volet | Où | Ce que ça montre |
 |---|---|---|
 | **Démo locale** | [`index.html`](index.html), mode « Local » | Le pipeline retrieval → synthèse, hors ligne, sans clé (TF-IDF + règles) |
-| **Variante Azure** | [`azure/`](azure/), mode « Azure OpenAI » | Azure OpenAI + Azure AI Search, orchestré en **LangChain.js** (TypeScript), avec garde-fous anti-hallucination |
+| **Simulation Azure** | [`index.html`](index.html), mode « Azure OpenAI · simulation » | Les étapes du pipeline Azure rejouées dans la page, avec leur trace, sans clé |
+| **Code Azure réel** | [`azure/`](azure/) | Azure OpenAI + Azure AI Search, orchestré en **LangChain.js** (TypeScript), avec garde-fous anti-hallucination |
 | **Évaluation** | [`eval.html`](eval.html), `azure/src/eval.ts` | Jeu de test annoté, métriques de recherche, détection d'hallucinations, abstention, juge LLM |
 
 Démo en ligne : https://karimtn.github.io/demo-rag/ · évaluation : https://karimtn.github.io/demo-rag/eval.html
@@ -26,7 +27,7 @@ Démo **autonome** (aucune dépendance, aucune clé API) du pipeline **retrieval
 
 - Ce n'est **pas** un LLM : la synthèse est générée par des **règles**, pour que la démo tourne hors-ligne et reste vérifiable.
 - Ce n'est **pas** des embeddings : c'est du **TF-IDF**, une baseline lexicographique.
-- Le pipeline avec **embeddings** et **LLM** est la [variante Azure](azure/) : même interface, mode « Azure OpenAI ».
+- Le pipeline avec **embeddings** et **LLM** est le [code Azure](azure/) ; la page en propose une simulation (mode « Azure OpenAI · simulation »).
 
 ## Lancer
 
@@ -59,16 +60,24 @@ npx serve .
 - **Réordonnancement** : bonus/malus par facette (carburant, boîte, ville, carrosserie, budget).
 - **Jeu de données** : 20 annonces **fictives** (aucune donnée réelle, aucun problème RGPD).
 
-## 2. Variante Azure OpenAI + Azure AI Search + LangChain.js
+## 2. Pipeline Azure OpenAI + Azure AI Search + LangChain.js
 
-Voir [`azure/README.md`](azure/README.md). En résumé : analyse de la requête par GPT en sortie structurée, recherche
+**Dans la page : une simulation.** Le mode « Azure OpenAI · simulation » rejoue chaque étape du pipeline dans le
+navigateur et affiche sa trace : l'objet structuré produit par l'analyse, le filtre OData envoyé à Azure AI Search, les
+classements mots-clés / vecteurs et leur fusion RRF, le brouillon de réponse, puis les corrections des garde-fous. Une case
+permet d'**injecter une erreur du LLM** (prix faux, annonce inventée) pour voir les garde-fous la corriger. Ce qui est
+simulé : l'analyse et la génération (des règles au lieu de GPT) et les embeddings (TF-IDF enrichi de synonymes). Le filtre
+OData et les garde-fous sont les mêmes que dans le vrai code. Code : [`lib/azure-sim.js`](lib/azure-sim.js).
+
+**Le vrai code : [`azure/`](azure/)**, voir [`azure/README.md`](azure/README.md). On peut aussi brancher la page sur l'API réelle
+(« Brancher l'API réelle » dans le mode Azure). En résumé : analyse de la requête par GPT en sortie structurée, recherche
 hybride (BM25 + vecteurs) avec filtre OData, budget appliqué par le code, génération avec citations obligatoires, puis
 garde-fous : citation hors contexte supprimée, prix non vérifiable → texte régénéré depuis les données, réponse sans
 source → abstention.
 
 ## 3. Évaluation de la qualité des réponses
 
-[`eval.html`](eval.html) calcule l'évaluation du pipeline local en direct dans le navigateur et affiche le dernier rapport Azure.
+[`eval.html`](eval.html) calcule en direct l'évaluation du pipeline local et de la simulation Azure, et affiche le dernier rapport du pipeline Azure réel.
 
 - **Jeu de test** : 14 questions annotées à la main, dont 3 pièges (modèle absent, véhicule hors catalogue, critères impossibles).
 - **Recherche** : hit@1, recall@3/5, MRR, nDCG@5.
@@ -77,7 +86,8 @@ source → abstention.
 - **Juge LLM** (option `--judge`) : pertinence et fidélité notées de 1 à 5.
 
 Le pipeline local obtient 79 % de réussite de bout en bout : il rate les synonymes (« sobre ») et propose une Model 3
-quand on demande une Model Y. C'est le rôle de l'évaluation : rendre ces limites visibles et mesurables.
+quand on demande une Model Y. C'est le rôle de l'évaluation : rendre ces limites visibles et mesurables. La simulation Azure obtient 100 %, mais ce score
+n'est pas représentatif, puisque ses règles ont été écrites en connaissant ces questions. Seul le rapport du pipeline réel compte.
 
 ## Structure
 
@@ -86,6 +96,7 @@ index.html          démo (modes Local / Azure)
 eval.html           tableau de bord d'évaluation
 lib/catalog.js      20 annonces fictives (partagé navigateur / Node)
 lib/local-rag.js    pipeline local
+lib/azure-sim.js    simulation du pipeline Azure (trace étape par étape)
 lib/eval-core.js    jeu de test, métriques, détecteurs d'hallucinations
 azure/              variante Azure en TypeScript + LangChain.js
 eval/reports/       rapports JSON produits par azure/src/eval.ts

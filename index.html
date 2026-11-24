@@ -57,6 +57,12 @@
   .azurebox{margin-bottom:14px;font-size:13px;color:#cdd8ef}
   .azurebox code{font-size:12px;color:var(--accent2)}
   .guard{margin-top:10px;font-size:12px;color:var(--warn)}
+  .inject{display:block;margin-top:10px;font-size:12.5px;color:var(--muted);cursor:pointer}
+  .real{margin-top:8px;font-size:12.5px} .real summary{cursor:pointer;color:var(--accent2)}
+  .trace{margin-top:16px} .trace[hidden]{display:none}
+  .step{border-left:2px solid #2c6d55;padding:4px 0 8px 12px;margin-left:4px}
+  .step b{font-size:12.5px;color:var(--txt)}
+  .step pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;color:#cdd8ef;background:#0a1322;border:1px solid var(--line);border-radius:8px;padding:8px}
   .err{color:var(--warn)}
 </style>
 </head>
@@ -72,18 +78,23 @@
   <div style="text-align:right">
     <div class="modes" role="group" aria-label="Pipeline">
       <button class="mode on" data-mode="local">Local · TF-IDF</button>
-      <button class="mode" data-mode="azure">Azure OpenAI</button>
+      <button class="mode" data-mode="azure">Azure OpenAI · simulation</button>
     </div>
     <div style="margin-top:8px;font-size:12.5px"><a href="eval.html">Évaluation de la qualité →</a></div>
   </div>
 </header>
 
 <div id="azurebox" class="card azurebox" hidden>
-  <b>Variante Azure</b> — Azure OpenAI (embeddings + GPT) · Azure AI Search (recherche hybride) · orchestration LangChain.js.
-  Elle appelle l'API du dossier <code>azure/</code>, que vous lancez avec vos propres clés.
-  <div class="search" style="margin:10px 0 0">
-    <input id="endpoint" type="text" spellcheck="false" placeholder="URL de l'API, ex. http://localhost:8787">
-  </div>
+  <b>Simulation du pipeline Azure</b> — Azure OpenAI (GPT + embeddings) · Azure AI Search (recherche hybride) ·
+  orchestration LangChain.js. La page rejoue chaque étape dans votre navigateur, sans clé ni appel réseau ;
+  le vrai code est dans <a href="https://github.com/karimtn/demo-rag/tree/main/azure" target="_blank" rel="noopener"><code>azure/</code></a>.
+  <label class="inject"><input type="checkbox" id="inject"> Injecter une erreur du LLM (prix faux, annonce inventée) pour voir les garde-fous</label>
+  <details class="real"><summary>Brancher l'API réelle (optionnel)</summary>
+    <div class="search" style="margin:10px 0 0">
+      <input id="endpoint" type="text" spellcheck="false" placeholder="URL de l'API lancée avec vos clés, ex. http://localhost:8787">
+    </div>
+    <div class="meta" style="margin-top:4px">Laissez vide pour rester en simulation.</div>
+  </details>
   <div id="azstatus" class="meta" style="margin-top:6px"></div>
 </div>
 
@@ -111,11 +122,16 @@
         vecteurs <b>TF-IDF</b>, puis comparés par similarité cosinus. Les critères détectés
         (budget, carburant, boîte, ville) ajustent le classement.<br><br>
         En mode <b>Local</b>, le LLM est remplacé par des règles pour tourner hors-ligne.
-        En mode <b>Azure OpenAI</b>, la même interface interroge un vrai pipeline : analyse de la
-        requête par GPT (sortie structurée), recherche hybride Azure AI Search avec filtre OData,
-        génération ancrée avec citations, puis garde-fous anti-hallucination.
+        En mode <b>Azure OpenAI · simulation</b>, la page rejoue les étapes du pipeline Azure :
+        analyse de la requête en sortie structurée, filtre OData, recherche hybride, génération
+        avec citations, puis garde-fous anti-hallucination. La trace s'affiche sous les résultats.
       </div>
     </div>
+  </div>
+
+  <div id="trace" class="trace" hidden>
+    <h2>Trace du pipeline, étape par étape</h2>
+    <div id="steps"></div>
   </div>
 </div>
 
@@ -128,6 +144,7 @@
 
 <script src="lib/catalog.js"></script>
 <script src="lib/local-rag.js"></script>
+<script src="lib/azure-sim.js"></script>
 <script>
 const { fmt, answer } = LocalRAG;
 const $ = (id) => document.getElementById(id);
@@ -166,10 +183,24 @@ function render(q, r, extra = ""){
   $("summary").insertAdjacentHTML("beforeend", extra);
 }
 
+const guardHtml = (g) => (g||[]).length ? `<div class="guard">Garde-fous déclenchés : ${g.map(esc).join(" · ")}</div>` : "";
+
+function renderTrace(trace){
+  $("trace").hidden = !trace;
+  if(trace) $("steps").innerHTML = trace.map(t=>`<div class="step"><b>${esc(t.step)}</b><pre>${esc(t.detail)}</pre></div>`).join("");
+}
+
+function runSimulation(q){
+  const r = AzureSim.answer(q, { inject: $("inject").checked });
+  render(q, r, guardHtml(r.guardrails));
+  renderTrace(r.trace);
+  $("azstatus").textContent = "Simulation locale : aucune donnée envoyée.";
+}
+
 async function runAzure(q){
   const url = $("endpoint").value.trim().replace(/\/$/, "");
-  if(!url){ $("azstatus").innerHTML = '<span class="err">Indiquez l\'URL de l\'API (voir azure/README).</span>'; return; }
   store.set("rag-endpoint", url);
+  if(!url) return runSimulation(q);
   $("azstatus").textContent = "Appel à Azure OpenAI…";
   try {
     const res = await fetch(`${url}/api/ask`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ question:q }) });
@@ -177,9 +208,9 @@ async function runAzure(q){
     if(!res.ok) throw new Error(r.error || res.status);
     const a = r.analysis || {};
     r.facets = { budget:a.budget, fuel:a.fuel, gearbox:a.gearbox, city:a.city };
-    const guard = (r.guardrails||[]).length ? `<div class="guard">Garde-fous déclenchés : ${r.guardrails.map(esc).join(" · ")}</div>` : "";
-    render(q, r, guard);
-    $("azstatus").textContent = `Réponse en ${r.latencyMs} ms${r.filter ? " · filtre OData appliqué" : ""}.`;
+    render(q, r, guardHtml(r.guardrails));
+    renderTrace(null);
+    $("azstatus").textContent = `API réelle : réponse en ${r.latencyMs} ms${r.filter ? " · filtre OData appliqué" : ""}.`;
   } catch(e) {
     $("azstatus").innerHTML = `<span class="err">Échec de l'appel : ${esc(e.message)}. L'API est-elle lancée et l'origine autorisée (ALLOWED_ORIGINS) ?</span>`;
   }
@@ -188,6 +219,7 @@ async function runAzure(q){
 function run(q){
   if(!q.trim()) return;
   if(mode === "azure") return runAzure(q);
+  renderTrace(null);
   render(q, answer(q));
 }
 
@@ -195,8 +227,9 @@ document.querySelectorAll(".mode").forEach(b=>b.addEventListener("click",()=>{
   mode = b.dataset.mode;
   document.querySelectorAll(".mode").forEach(x=>x.classList.toggle("on", x===b));
   $("azurebox").hidden = mode !== "azure";
-  if(mode === "local") run($("q").value);
+  run($("q").value);
 }));
+$("inject").addEventListener("change", () => run($("q").value));
 $("endpoint").value = store.get("rag-endpoint") || "";
 
 const EXAMPLES = [

@@ -51,10 +51,14 @@
 
   <div class="tabs" id="tabs">
     <button class="tab on" data-src="live">Local · calculé en direct</button>
-    <button class="tab" data-src="eval/reports/azure.json" id="tab-azure">Azure OpenAI · dernier rapport</button>
+    <button class="tab" data-src="sim">Azure · simulation en direct</button>
+    <button class="tab" data-src="eval/reports/azure.json" id="tab-azure">Azure réel · dernier rapport</button>
     <label class="tab">Charger un rapport JSON<input type="file" id="file" accept="application/json"></label>
   </div>
   <div class="meta sub" id="source" style="font-size:12.5px"></div>
+  <div class="sub" id="caveat" style="font-size:12.5px;color:var(--warn);margin-top:6px" hidden>
+    Score de la simulation : ses règles imitent ce qu'un LLM bien guidé ferait sur ces 14 questions, il n'est donc pas
+    représentatif. Il sert à montrer la mécanique ; le vrai score est celui du rapport Azure réel.</div>
 
   <h2>Synthèse</h2>
   <div class="kpis" id="kpis"></div>
@@ -85,6 +89,7 @@
 
 <script src="lib/catalog.js"></script>
 <script src="lib/local-rag.js"></script>
+<script src="lib/azure-sim.js"></script>
 <script src="lib/eval-core.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -128,6 +133,8 @@ function render(report, sourceLabel) {
 
 async function show(src) {
   document.querySelectorAll(".tab[data-src]").forEach((t) => t.classList.toggle("on", t.dataset.src === src));
+  $("caveat").hidden = src !== "sim";
+  if (src === "sim") return render(await RAGEval.runEval((q) => AzureSim.answer(q), { name: "azure-simulation" }), "Simulation calculée dans votre navigateur");
   if (src === "live") return render(await RAGEval.runEval((q) => LocalRAG.answer(q), { name: "local" }), "Calculé dans votre navigateur");
   try {
     const res = await fetch(src, { cache: "no-store" });
